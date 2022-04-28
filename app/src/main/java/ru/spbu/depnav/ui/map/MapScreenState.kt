@@ -15,8 +15,11 @@ import ovh.plrapps.mapcompose.core.TileStreamProvider
 import ovh.plrapps.mapcompose.ui.state.MapState
 import ru.spbu.depnav.model.Marker
 import ru.spbu.depnav.model.MarkerText
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "MapViewModel"
+
+private const val MARKER_VISIBILITY_SCALE = 0.4
 
 class MapScreenState : ViewModel() {
     var state by mutableStateOf(MapState(0, 0, 0))
@@ -33,16 +36,37 @@ class MapScreenState : ViewModel() {
     var highlightedMarker by mutableStateOf<Pair<Marker, MarkerText>?>(null)
         private set
 
+    private var markers: Iterable<Pair<Marker, MarkerText>> = emptyList()
+    private val areMarkersPlaced = AtomicBoolean(false)
+
     fun setParams(width: Int, height: Int, tileSize: Int = 1024) {
         state.shutdown()
         state = MapState(1, width, height, tileSize) {
             scroll(0.5, 0.5)
             scale(0f)
         }.apply {
+            setStateChangeListener { placeVisibleMarkers() }
+
             onTap { _, _ ->
                 if (!highlightMarker) showUI = !showUI
                 highlightMarker = false
                 highlightedMarker?.let { (marker, _) -> state.removeMarker(marker.idStr) }
+            }
+        }
+    }
+
+    private fun MapState.placeVisibleMarkers() {
+        if (scale >= MARKER_VISIBILITY_SCALE && areMarkersPlaced.compareAndSet(false, true)) {
+            // Markers should be placed, but they aren't -- place the markers
+            viewModelScope.launch {
+                for ((marker, markerText) in markers)
+                    placeMarker(marker, markerText, isHighlighted = false)
+            }
+        } else if (scale < MARKER_VISIBILITY_SCALE && areMarkersPlaced.compareAndSet(true, false)) {
+            // Markers shouldn't be visible, but they are -- retain only the highlighted marker
+            removeAllMarkers()
+            if (highlightMarker) highlightedMarker?.let { (marker, markerText) ->
+                placeMarker(marker, markerText, isHighlighted = true)
             }
         }
     }
@@ -83,21 +107,26 @@ class MapScreenState : ViewModel() {
         placeMarker(newMarker, newMarkerText, isHighlighted = true)
     }
 
-    fun replaceLayersWith(tileProviders: Iterable<TileStreamProvider>, isDark: Boolean) {
+    fun replaceLayers(tileProviders: Iterable<TileStreamProvider>, isDark: Boolean) {
         Log.d(TAG, "Replacing layers...")
 
         state.removeAllLayers()
+
         for (tileProvider in tileProviders) state.addLayer(tileProvider)
         usesDarkThemeTiles = isDark
     }
 
-    fun replaceMarkersWith(markersWithText: Map<Marker, MarkerText>) {
+    fun replaceMarkers(newMarkers: Iterable<Pair<Marker, MarkerText>>) {
         Log.d(TAG, "Replacing markers...")
 
         state.removeAllMarkers()
 
-        for ((marker, markerText) in markersWithText)
-            placeMarker(marker, markerText, isHighlighted = false)
+        highlightMarker = false
+        highlightedMarker = null
+        markers = newMarkers
+        areMarkersPlaced.set(false)
+
+        state.placeVisibleMarkers()
     }
 
     fun focusOnMarker(marker: Marker, markerText: MarkerText) {

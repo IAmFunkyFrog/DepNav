@@ -53,7 +53,8 @@ class MainActivity : LanguageAwareActivity() {
                 MarkerText(marker.id, systemLanguage, null, null)
             }
 
-            setFloor(marker.floor) { mMapScreenState.focusOnMarker(marker, markerText) }
+            setFloor(marker.floor)
+            mMapScreenState.focusOnMarker(marker, markerText)
         }
     }
 
@@ -86,9 +87,11 @@ class MainActivity : LanguageAwareActivity() {
         when {
             mMapScreenState.usesDarkThemeTiles == null -> {
                 mMapScreenState.setParams(mapInfo.floorWidth, mapInfo.floorHeight, mapInfo.tileSize)
-                setFloor(mFloors.keys.first())
+                lifecycleScope.launch { setFloor(mFloors.keys.first()) }
             }
-            mMapScreenState.usesDarkThemeTiles != isInDarkTheme -> setFloor(mMapScreenState.currentFloor)
+            mMapScreenState.usesDarkThemeTiles != isInDarkTheme -> lifecycleScope.launch {
+                setFloor(mMapScreenState.currentFloor)
+            }
         }
 
         setContent {
@@ -100,7 +103,7 @@ class MainActivity : LanguageAwareActivity() {
                     mapScreenState = mMapScreenState,
                     floorsNum = mapInfo.floorsNum,
                     onStartSearch = startSearch::launch,
-                    onFloorSwitch = this::setFloor
+                    onFloorSwitch = { floor -> lifecycleScope.launch { setFloor(floor) } }
                 )
             }
         }
@@ -119,7 +122,7 @@ class MainActivity : LanguageAwareActivity() {
                         markerDao.loadWithTextByFloor(
                             floor,
                             systemLanguage
-                        ).entries.associate { (marker, markerTexts) ->
+                        ).entries.map { (marker, markerTexts) ->
                             val markerText = markerTexts.firstOrNull() ?: run {
                                 Log.w(TAG, "Marker $marker has no text on $systemLanguage")
                                 MarkerText(marker.id, systemLanguage, null, null)
@@ -132,7 +135,7 @@ class MainActivity : LanguageAwareActivity() {
         }
     }
 
-    private fun setFloor(floorIndex: Int, onFinished: () -> Unit = {}) {
+    private suspend fun setFloor(floorIndex: Int) {
         val floor = mFloors[floorIndex]
         if (floor == null) {
             Log.e(TAG, "Cannot switch to floor $floorIndex which does not exist")
@@ -144,13 +147,9 @@ class MainActivity : LanguageAwareActivity() {
         val shouldReplaceMarkers = floorIndex != mMapScreenState.currentFloor
 
         mMapScreenState.currentFloor = floorIndex
-        mMapScreenState.highlightMarker = false
 
-        lifecycleScope.launch {
-            mMapScreenState.replaceLayersWith(floor.layers, isInDarkTheme)
-            if (shouldReplaceMarkers) mMapScreenState.replaceMarkersWith(floor.markers.await())
-            Log.d(TAG, "Switched to floor $floorIndex")
-            onFinished()
-        }
+        mMapScreenState.replaceLayers(floor.layers, isInDarkTheme)
+        if (shouldReplaceMarkers) mMapScreenState.replaceMarkers(floor.markers.await())
+        Log.d(TAG, "Switched to floor $floorIndex")
     }
 }

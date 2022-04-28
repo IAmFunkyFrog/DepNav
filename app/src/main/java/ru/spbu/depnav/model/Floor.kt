@@ -5,5 +5,5 @@ import ovh.plrapps.mapcompose.core.TileStreamProvider
 
 data class Floor(
     val layers: Iterable<TileStreamProvider>,
-    val markers: Deferred<Map<Marker, MarkerText>>
+    val markers: Deferred<List<Pair<Marker, MarkerText>>>
 )
